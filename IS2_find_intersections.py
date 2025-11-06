@@ -1,72 +1,72 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Find intersections (crossings) in IS-2 data
-    - beam-to-beam (e.g. beam gt1l with another gt1l)
-    - within 10 days time interval (t-10 < t < t+10)
-    - filter out sample points with no freeboard_v4 values
-    - filter out sample points that are not in Belgica Bank fast ice polygon (i.e. no samples over drifting ice!)
-    - only in time period 15 jan - 15 may 2022, when fast-ice is stable --> looking at same ice in same location
-   
-Collect all intersections for this granule in dict
+Find beam-to-beam intersections in re-processed IS-2 data (i.e. output from 'reprocess_ATL10_freeboards.py')
+    - within specified search radius (default=250m)
+    - within specified time range (start_time, end_time) -> only granules acquired within this time range are used to query intersections
+    - within specified time interval (default = 10 days, i.e. t-10 < t < t+10)
+    - filter out data without valid 'freeboard_new' value (i.e. interpolated/original ATL10 freeboard)
+    - optional: filter out invalid points using polygon as mask
+
+Intersections are collected in a dictionary per granule, and saved to disk as pickle file ("original_filename"_intersections.pkl)
  - target_samples = samples from current granule with identified intersections
  - overlapping_query_samples = corresponding sample(s) from other granules that intersect with target_sample
 
-Created on Sun Feb  9 17:53:56 2025
-
-@author: cat
+@author: Catherine Taelman
 """
 
-import os
 import glob
 import pandas as pd
-import numpy as np
-import math
-import matplotlib.pyplot as plt
 from pathlib import Path
 from datetime import datetime, timedelta
 import pickle
-from shapely.geometry import Point
 import geopandas as gpd
 
-#%% DEFINE DATA DIRS
+# ---------------------------------------------------------------------------- #
+# SET HYPERPARAMETERS #
 
-radius = 250 # in meters 
+# overwrite existing output?
 overwrite=True
 
-# define directories
-PROJ_DIR = Path('/home/cat/onedrive/work/PhD/belgica_bank_study')
-DATA_DIR = PROJ_DIR / 'data' 
-IS2_DIR = DATA_DIR / 'IS2' / 'ATL10'
+radius = 250 # in meters
+
+# set time range for search -> query for all granules acquired within this time interval
+start_time = datetime(2022,1,5)
+end_time = datetime(2022,1,9)
+print(f"Searching intersections from {start_time.strftime('%d-%m-%Y')} to {end_time.strftime('%d-%m-%Y')}")
+
+# define the max. allowed time difference between two overpasses
+delta_t = timedelta(days=10)
+
+print(f'Using search radius {radius}m and time window +/- {delta_t.days} days')
+
+# ---------------------------------------------------------------------------- #
+# DEFINE DATA DIRS #
+
+# path to data directory
+DATA_DIR = Path('data')
 
 # dir where intersection dictionaries are saved as pickle files
-OUT_DIR = IS2_DIR / f'intersections_across_beams_radius{radius}'
+OUT_DIR = DATA_DIR / 'intersections' / f"{start_time.strftime('%Y-%m-%d')}_{end_time.strftime('%Y-%m-%d')}_deltaT_{delta_t.days}days_radius_{radius}m"
 Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
 
-#%% LOAD BELGICA BANK FAST ICE OUTLINE ROIs
+masking_pol = None
 
-# read in FYI and MYI ROIs
-fastice_roi_path = DATA_DIR / 'shapefiles' / 'BB_fastice_ROI_4326.shp'
-fastice_pol = gpd.read_file(fastice_roi_path)
+# optional: read in masking polygon
+# polygon_path = DATA_DIR / 'shapefiles' / 'BB_fastice_ROI_4326.shp'
+# masking_pol = gpd.read_file(polygon_path)
 
-#%% FIND GRANULES WITHIN SPECIFIED TIME WINDOW
+# ---------------------------------------------------------------------------- #
+# FIND GRANULES WITHIN SPECIFIED TIME WINDOW #
 
-# get list of all granules (filepaths) with re-processed freeboards in period jan-aug 2022
-all_granules = glob.glob((IS2_DIR/'2022_*/re-processed_freeboards/*.h5').as_posix())
-
-# define time window to search for intersections
-delta_t = timedelta(days=10)
-print(f'Time window for intersections: +/- {delta_t}')
-
-# set time limits to search for overlaps (we want overlaps over stable fast-ice!)
-start_time = datetime(2022,1,15)
-end_time = datetime(2022,5,16)
+# frab all files to process
+all_files = glob.glob((DATA_DIR / 'reprocessed_ATL10' / "*.h5").as_posix())
 
 # make list of corresponding timestamps (from filename)
 valid_timestamps = []
 valid_granules = []
 
-for granule_path in all_granules:
+for granule_path in all_files:
     granule_basename = Path(granule_path).stem
     granule_timestamp = datetime.strptime(granule_basename[19:33], '%Y%m%d%H%M%S')
     if start_time < granule_timestamp < end_time:
@@ -75,15 +75,23 @@ for granule_path in all_granules:
 
 del granule_basename
 del granule_timestamp
-del all_granules
+del all_files
 
 # dict with granule_basename : timestamp
 granule_timestamp_dict = dict(zip(valid_granules, valid_timestamps))
+
+if len(valid_granules) == 0:
+    print('No granules found within specified time interval!')
+    print('------------------------------------------------')
+
+# ---------------------------------------------------------------------------- #
+# FIND OVERLAPPING GRANULES
 
 # loop through granules and find other granules that overlap in time
 for target_granule_path in sorted(valid_granules):
     # grab granule basename to name output file
     t_gran_basename = Path(target_granule_path).stem 
+    print('-------------------------------------------------')
     print(f'Target granule is: {t_gran_basename}')
     t_gran_timestamp = granule_timestamp_dict[target_granule_path]
     
@@ -101,12 +109,17 @@ for target_granule_path in sorted(valid_granules):
     # read in data from target granule
     t_df = pd.read_hdf(target_granule_path)
     
-    # drop data that is not over fast ice area
-    points = gpd.GeoDataFrame(t_df, geometry=gpd.points_from_xy(t_df.lons, t_df.lats), crs=4326)
-    t_df_fastice = gpd.sjoin(points, fastice_pol, how='inner', predicate = 'within')
+    if masking_pol != None:
+        # drop data that is not within polygon
+        points = gpd.GeoDataFrame(t_df, geometry=gpd.points_from_xy(t_df.lons, t_df.lats), crs=4326)
+        t_df = gpd.sjoin(points, masking_pol, how='inner', predicate = 'within')
     
-    # drop data where there is no freeboard_V4 value
-    t_df_fastice = t_df_fastice.dropna(subset=['freeboard_v4'])
+    # drop data where there is no freeboard_new value
+    t_df = t_df.dropna(subset=['freeboard_new'])
+    
+    if t_df.empty:
+        print('No intersections found')
+        continue
     
     # grab target timestamp and set search window in time
     t_timestamp = t_df.timestamps.values[0]
@@ -130,15 +143,15 @@ for target_granule_path in sorted(valid_granules):
     for query_gran_path in query_dict.keys():
         q_df = pd.read_hdf(query_gran_path)
         
-        # drop data that is not over fast ice area
-        q_points = gpd.GeoDataFrame(q_df, geometry=gpd.points_from_xy(q_df.lons, q_df.lats), crs=4326)
-        q_df_fastice = gpd.sjoin(q_points, fastice_pol, how='inner', predicate = 'within')
+        if masking_pol != None:
+            # drop data that is not over fast ice area
+            q_points = gpd.GeoDataFrame(q_df, geometry=gpd.points_from_xy(q_df.lons, q_df.lats), crs=4326)
+            q_df = gpd.sjoin(q_points, masking_pol, how='inner', predicate = 'within')
         
-        # drop data where there is no freeboard_V4 value
-        q_df_fastice = q_df_fastice.dropna(subset=['freeboard_v4'])
+        # drop data where there is no freeboard_new value
+        q_df = q_df.dropna(subset=['freeboard_new'])
+        query_dfs.append(q_df)
         
-        query_dfs.append(q_df_fastice)
-    
     if query_dfs == []:
         continue
     
@@ -150,8 +163,8 @@ for target_granule_path in sorted(valid_granules):
                      'overlapping_query_samples': []}
     
     # loop through different beams in target and query dataframes and find the k-nearest neighbours per freeboard sample in the target dataframe
-    for beamNum in t_df_fastice.beamNum.unique():
-        print(f'Looking for kNN in beam {beamNum} ... ')
+    for beamNum in t_df.beamNum.unique():
+        # print(f'Looking for kNN in beam {beamNum} ... ')
         
         # keep track of indices for target and query samples
         t_idx = []
@@ -160,9 +173,9 @@ for target_granule_path in sorted(valid_granules):
         neighs_dfs = []
         
         # get target samples of only one beam
-        t_df_subset = t_df_fastice[t_df_fastice['beamNum'] == beamNum]
-        #q_df_subset = query_dataframe[query_dataframe['beamNum'] == beamNum]
-        q_df_subset = query_dataframe # find intersections with ANY other beam
+        t_df_subset = t_df[t_df['beamNum'] == beamNum]
+        # find intersections with ANY other beam
+        q_df_subset = query_dataframe 
         
         # if not data in either target or query dataframes, continue to next beam
         if (t_df_subset.shape[0] == 0) or (q_df_subset.shape[0] == 0):
@@ -181,7 +194,7 @@ for target_granule_path in sorted(valid_granules):
         from scipy.spatial import KDTree
         tree = KDTree(query_samples)
         
-        # loop through each fb point along track and find k-nearest neighbours within specified radius
+        # loop through each freeboard sample along track and find k-nearest neighbours within specified radius
         for target_idx, target_sample in enumerate(target_samples): 
             point_coord = [target_sample[0], target_sample[1]]
             query_idxs = tree.query_ball_point(point_coord, radius) # returns indices of neighbours in query tree within radius
@@ -203,3 +216,6 @@ for target_granule_path in sorted(valid_granules):
     if not intersections['target_samples'] == []:
         with open(out_dict_path, 'wb') as f:
             pickle.dump(intersections, f)
+    
+    if intersections['target_samples'] == []:
+        print('No intersections found')

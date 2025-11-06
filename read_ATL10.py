@@ -2,8 +2,11 @@
 # -*- coding: utf-8 -*-
 """
 
-read data from IceSat-2 h5 file into Pandas dataframes: one dataframe for freeboard data, one for lead data
+Read data from IceSat-2 ATL10 h5 file into Pandas dataframes: 
+    - one dataframe for freeboard data
+    - one for lead data
 
+@author: cat
 """
 
 import h5py
@@ -133,14 +136,14 @@ def create_dataframes(f, beam_str, beam_num, return_fb, return_leads, spatial_ex
         # lead tiepoints (note: these are ALL tiepoints along entire granule)
         lead_lats = f[beam_str]['leads']['latitude'][:]
         lead_lons = f[beam_str]['leads']['longitude'][:]
-        lead_ssh = f[beam_str]['leads']['lead_height'][:]
+        lead_ssha = f[beam_str]['leads']['lead_height'][:]
         
         # along-track distance from the start of granule
         lead_dist_x = f[beam_str]['leads']['lead_dist_x'][:] / 1000 # in km
     
         df_leads = pd.DataFrame({'lats': lead_lats,
                                  'lons': lead_lons,
-                                 'lead_ssh': lead_ssh,
+                                 'lead_ssha': lead_ssha,
                                  'lead_dist_x' : lead_dist_x
                                 })
         
@@ -185,12 +188,12 @@ def load_data_IS2_beam(filepath, beam_num, return_fb = True, return_leads = True
         print(f'Beam nr: {beam_num} not valid for IceSat-2. Choose from 1-6.')
         return
         
-    print(f'Beam nr: {beam_num}')
+    #print(f'Beam nr: {beam_num}')
     
     # try reading in h5 file
     try:
         f = h5py.File(filepath, 'r')
-        print('got file')
+        #print('got file')
     except FileNotFoundError:
         print(f'File not found: {filepath}')
         print('---------------------------------------------------------')
