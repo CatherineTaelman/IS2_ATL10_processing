@@ -2,17 +2,24 @@
 # -*- coding: utf-8 -*-
 """
 Analysis of IS-2 intersections:
-    - filter out duplicates in dataframe (e.g. idx (2-3) is same as (3-2))
-    - for each intersection, calculate:
+    1. filter out duplicates in dataframe (e.g. idx (2-3) is same as (3-2))
+    
+    2. for each intersection, calculate:
         - time difference (delta_t)
-        - corresponding difference in average freeboard and roughness values
+        - corresponding difference in average freeboard and roughness (delta_mean_fb & delta_roughness)
         - IQR of all freeboards
-    - plot:
+        
+    3. filter out "invalid" intersections, i.e. where delta_roughness > 0.1 between two beams of an intersection
+    
+    4. plot:
         1) scatter plot with delta_freeboard versus delta_time: does increasing time difference between two tracks result in increasingly different retrieved freeboard values?
         2) scatter plot for query_freeboard versus target_freeboard, with delta_time as color code. Also reports Pearson's correlation coeff in plot.
 
-@author: cat
+Note: roughness here means small-scale surface roughness and is approximated by the width of the Gaussian fit to the IS-2 photon height distribution
+
+@author: Catherine Taelman
 """
+
 import glob
 import pandas as pd
 import numpy as np
@@ -71,7 +78,8 @@ for filepath in intersections_df_filepaths:
     # remove duplicates from dataframe
     intersections_subset = intersections.drop(index=[i[0] for i in duplicate_pairs])
     
-    # FILTER OUT "INVALID" INTERSECTIONS
+    # ------------------------------------------------------------------------ #
+    # CALCULATE TIME DIFF AND CORRESPONDING FB AND ROUGHNESS DIFF
     
     t1 = intersections_subset.t_timestamp.values
     t2 = intersections_subset.q_timestamp.values
@@ -89,6 +97,9 @@ for filepath in intersections_df_filepaths:
     delta_iqr = np.abs(iqr2-iqr1)
     delta_mean_fb = np.abs(fb2-fb1)
     delta_roughness = np.abs(rough2-rough1)
+    
+    # ------------------------------------------------------------------------ #
+    # FILTER OUT "INVALID" INTERSECTIONS (I.E. WHERE ROUGHNESS IS TOO DIFFERENT BETWEEN 2 TRACKS)
     
     # define threshold for filtering
     condition_roughness = delta_roughness<0.1
@@ -113,13 +124,14 @@ for filepath in intersections_df_filepaths:
     dfs.append(filtered_df)
 
     # ------------------------------------------------------------------------- #
+    # PLOT
+    
     # plot fb_target vs fb_query #
     
     fb_scatterplot_outpath = FIG_DIR / f'scatter_fb1_vs_fb2_{radius}.png'
 
     cmap=plt.cm.get_cmap('viridis', len(np.unique(delta_t)))
-    #cmap = matplotlib.colormaps.get_cmap('viridis', len(np.unique(delta_t)))
-    
+
     delta_t = np.int16(delta_t)
     
     # fitting a linear regression line per time difference + calculate pearson's correlation coeff
@@ -159,9 +171,9 @@ for filepath in intersections_df_filepaths:
         str_r
     
     plt.tight_layout()
-    plt.savefig(fb_scatterplot_outpath, dpi=300)
+    plt.savefig(fb_scatterplot_outpath)
     
-# make global dataframe with ALL intersections included
+# make global dataframe with ALL intersections
 df = pd.concat(dfs)
 df = df.reset_index(level=0).reset_index(drop=True)
   
@@ -200,7 +212,7 @@ plt.tick_params(axis='y', labelsize=12)
 plt.grid(alpha=0.5)
 
 plt.tight_layout()
-plt.savefig(plot_outpath, dpi=300)
+plt.savefig(plot_outpath)
 
 # ------------------------------------------------------------------------- #
 
@@ -223,8 +235,6 @@ plt.tick_params(axis='y', labelsize=12)
 plt.grid(alpha=0.5)
 
 plt.tight_layout()
-plt.savefig(fb_vs_time_plot_outpath, dpi=300)
-
-#%%
+plt.savefig(fb_vs_time_plot_outpath)
 
 # ------------------------------------------------------------------------- #

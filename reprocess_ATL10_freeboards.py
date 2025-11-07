@@ -38,13 +38,13 @@ overwrite = True
 # path to data directory
 DATA_DIR = Path('data')
 
-# where to save figures
-FIG_DIR = DATA_DIR / 'figures'
-Path(FIG_DIR).mkdir(parents=True, exist_ok=True)
-
 # where to save re-processed ATL10 files
 OUT_DIR = DATA_DIR / 'reprocessed_ATL10'
 Path(OUT_DIR).mkdir(parents=True, exist_ok=True)
+
+# where to save figures
+FIG_DIR = OUT_DIR / 'figures'
+Path(FIG_DIR).mkdir(parents=True, exist_ok=True)
 
 # frab all files to process
 original_files = glob.glob((DATA_DIR / 'original_ATL10' / "*.h5").as_posix())
